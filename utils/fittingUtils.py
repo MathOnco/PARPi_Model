@@ -97,10 +97,13 @@ def PlotData(dataDf, feature='Confluence', plotDrugConcentration=True, titleStr=
     plt.tight_layout()
     if outName is not None: plt.savefig(outName)
 
-def PlotFit(fitObj, dataDf, linewidth=5, linewidthA=5, titleStr="", legend=True, outName=None, ax=None, solver_kws={}, **kwargs):
+def PlotFit(fitObj, dataDf, model=None, linewidth=5, linewidthA=5, titleStr="", legend=True, outName=None, ax=None, solver_kws={}, **kwargs):
     if ax is None: fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-    myModel = MakeModelFromStr(fitObj.modelName)
-    myModel.SetParams(**fitObj.params.valuesdict())
+    if model is None:
+        myModel = MakeModelFromStr(fitObj.modelName)
+        myModel.SetParams(**fitObj.params.valuesdict())
+    else:
+        myModel = model
     myModel.Simulate(treatmentScheduleList=utils.ExtractTreatmentFromDf(dataDf),max_step=1,**solver_kws)
     myModel.Plot(ymin=0, title=titleStr, linewidth=linewidth, linewidthA=linewidthA, ax=ax, plotLegendB=legend, **kwargs)
     PlotData(dataDf, plotDrugConcentration=False, ax=ax, **kwargs)
