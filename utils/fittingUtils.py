@@ -97,14 +97,16 @@ def PlotData(dataDf, feature='Confluence', plotDrugConcentration=True, titleStr=
     plt.tight_layout()
     if outName is not None: plt.savefig(outName)
 
-def PlotFit(fitObj, dataDf, model=None, linewidth=5, linewidthA=5, titleStr="", legend=True, outName=None, ax=None, solver_kws={}, **kwargs):
+def PlotFit(fitObj, dataDf, model=None, dt=1, linewidth=5, linewidthA=5, titleStr="", legend=True, outName=None, ax=None, solver_kws={}, **kwargs):
     if ax is None: fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     if model is None:
         myModel = MakeModelFromStr(fitObj.modelName)
         myModel.SetParams(**fitObj.params.valuesdict())
     else:
         myModel = model
-    myModel.Simulate(treatmentScheduleList=utils.ExtractTreatmentFromDf(dataDf),max_step=1,**solver_kws)
+    solver_kws['max_step'] = solver_kws.get('max_step',1) # Use fine-grained time-stepping unless otherwise specified
+    myModel.Simulate(treatmentScheduleList=utils.ExtractTreatmentFromDf(dataDf),**solver_kws)
+    myModel.Trim(dt=dt)
     myModel.Plot(ymin=0, title=titleStr, linewidth=linewidth, linewidthA=linewidthA, ax=ax, plotLegendB=legend, **kwargs)
     PlotData(dataDf, plotDrugConcentration=False, ax=ax, **kwargs)
     if outName is not None: plt.savefig(outName); plt.close()
