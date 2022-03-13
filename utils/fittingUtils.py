@@ -106,9 +106,9 @@ def PlotFit(fitObj, dataDf, linewidth=5, linewidthA=5, titleStr="", legend=True,
     PlotData(dataDf, plotDrugConcentration=False, ax=ax, **kwargs)
     if outName is not None: plt.savefig(outName); plt.close()
 
-def LoadFit(modelName, fitId=0, fitDir="./", **kwargs):
+def LoadFit(modelName, fitId=0, fitDir="./", model=None, **kwargs):
     fitObj = pickle.load(open(os.path.join(fitDir, "fitObj_fit_%d.p"%(fitId)), "rb"))
-    myModel = MakeModelFromStr(modelName, **kwargs)
+    myModel = MakeModelFromStr(modelName, **kwargs) if model is None else model
     myModel.SetParams(**fitObj.params.valuesdict())
     return fitObj, myModel
 
