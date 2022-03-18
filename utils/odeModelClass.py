@@ -311,6 +311,7 @@ class ODEModel():
         ax.set_title(kwargs.get('title', ''))
         if not decoratey2:
             ax2.set_yticklabels("")
+            ax2.set_ylabel("")
         plt.tight_layout()
         if kwargs.get('saveFigB', False):
             plt.savefig(kwargs.get('outName', 'modelPrediction.png'), orientation='portrait', format='png')
