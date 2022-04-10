@@ -8,7 +8,8 @@ import sys
 import os
 import pickle
 import scipy
-from math import ceil
+from lmfit import minimize
+from tqdm import tqdm
 if 'matplotlib' not in sys.modules:
     import matplotlib as mpl
     mpl.use('Agg')
@@ -19,6 +20,7 @@ sys.path.append("./")
 import myUtils as utils
 from odeModels import MakeModelFromStr
 
+# ====================================================================================
 def residual(params, x, data, model, feature, solver_kws={}):
     model.SetParams(**params.valuesdict())
     converged = False
@@ -35,6 +37,7 @@ def residual(params, x, data, model, feature, solver_kws={}):
     modelPrediction = f(t_eval)
     return (data[feature]-modelPrediction)
 
+# ====================================================================================
 def residual_multipleTxConditions(params, x, data, model, feature, solver_kws={}):
     tmpList = []
     for drugConcentration in data.DrugConcentration.unique():
@@ -47,6 +50,7 @@ def residual_multipleTxConditions(params, x, data, model, feature, solver_kws={}
         tmpList.append(residual(params, x, currData, model, feature, solver_kws={}))
     return np.concatenate(tmpList)
 
+# ====================================================================================
 def PerturbParams(params):
     params = params.copy()
     for p in params.keys():
@@ -55,11 +59,13 @@ def PerturbParams(params):
             params[p].value = np.random.uniform(low=currParam.min, high=currParam.max)
     return params
 
+# ====================================================================================
 def ComputeRSquared(fit,dataDf,feature="Confluence"):
     tss = np.sum(np.square(dataDf[feature]-dataDf[feature].mean()))
     rss = np.sum(np.square(fit.residual))
     return 1-rss/tss
 
+# ====================================================================================
 def PlotData(dataDf, feature='Confluence', plotDrugConcentration=True, titleStr="",
              xlim=None, ylim=None, y2lim=100, decorateX=True, decorateY=True, decorateY2=False, markersize=10,
              ax=None, figsize=(10, 8), outName=None, color="black", **kwargs):
@@ -97,6 +103,7 @@ def PlotData(dataDf, feature='Confluence', plotDrugConcentration=True, titleStr=
     plt.tight_layout()
     if outName is not None: plt.savefig(outName)
 
+# ====================================================================================
 def PlotFit(fitObj, dataDf, model=None, dt=1, linewidth=5, linewidthA=5, titleStr="", legend=True, outName=None, ax=None, solver_kws={}, **kwargs):
     if ax is None: fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     if model is None:
@@ -111,12 +118,14 @@ def PlotFit(fitObj, dataDf, model=None, dt=1, linewidth=5, linewidthA=5, titleSt
     PlotData(dataDf, plotDrugConcentration=False, ax=ax, **kwargs)
     if outName is not None: plt.savefig(outName); plt.close()
 
+# ====================================================================================
 def LoadFit(modelName, fitId=0, fitDir="./", model=None, **kwargs):
     fitObj = pickle.load(open(os.path.join(fitDir, "fitObj_fit_%d.p"%(fitId)), "rb"))
     myModel = MakeModelFromStr(modelName, **kwargs) if model is None else model
     myModel.SetParams(**fitObj.params.valuesdict())
     return fitObj, myModel
 
+# ====================================================================================
 def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
     fitIdList = [int(re.findall(r'\d+', x)[0]) for x in os.listdir(fitDir) if
                  x.split("_")[0] == "fitObj"]
@@ -130,45 +139,150 @@ def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
                            **dict([(x+"_se",fitObj.params[x].stderr) for x in fitObj.params.keys()])})
     return pd.DataFrame(tmpDicList)
 
-def PlotParameterDistribution_points(summaryDf, exampleFit, x="PatientId", showAll=False, nCols=5, figsize=(12, 4), ax=None):
-    paramNamesList = list(exampleFit.params.keys()) if showAll else exampleFit.var_names
-    nParams = len(paramNamesList)
+# ====================================================================================
+def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, show_progress=True, outName=None, **kwargs):
+    '''
+    Function to estimate uncertainty in the parameter estimates and model predictions using a
+    parametric bootstrapping method. This means, it uses the maximum likelihood estimate (best fit
+    based on least squared method) to generate n_bootstrap synthetic data sets (noise is generated
+    by drawing from an error distribution N(0,sqrt(ssr/df))). Subsequently it fits to this synthetic
+    data to obtain a distribution of parameter estimates (one estimate/prediction
+    per synthetic data set).
+    '''
+    # Initialise
+    nvarys = fitObj.nvarys
+    residual_variance = np.sum(np.square(fitObj.residual)) / fitObj.nfree
+    paramsToEstimateList = [param for param in fitObj.params.keys() if fitObj.params[param].vary]
 
-    if ax is None: fig, axList = plt.subplots(nParams // nCols + 1, nCols, figsize=figsize)
-    nPatients = summaryDf.shape[0]
-    for i, param in enumerate(paramNamesList):
-        currAx = axList.flatten()[i]
-        sns.stripplot(x=x, y=param, data=summaryDf, ax=currAx)
-        currAx.hlines(xmin=-1, xmax=nPatients+1, y=exampleFit.params[param].min, linestyles='--')
-        currAx.hlines(xmin=-1, xmax=nPatients+1, y=exampleFit.params[param].max, linestyles='--')
-        currAx.set_xlabel("")
-        sns.despine(ax=currAx, offset=5, trim=True)
-        currAx.tick_params(labelsize=24, rotation=45)
-        currAx.set_xlabel("")
-        currAx.set_ylabel("")
-        currAx.set_title(param)
-    plt.tight_layout()
+    # 1. Perform bootstrapping
+    parameterEstimatesMat = np.zeros((n_bootstraps, nvarys+1))  # Array to hold parameter estimates for CI estimation
+    for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
+        # i) Generate synthetic data by sampling from the error model (assuming a normal error distribution)
+        tmpDataDf = fitObj.data.copy()
+        bestFitPrediction = tmpDataDf['Confluence'] - fitObj.residual
+        tmpDataDf['Confluence'] = bestFitPrediction + np.random.normal(loc=0, scale=np.sqrt(residual_variance),
+                                                                       size=fitObj.ndata)
+        # ii) Fit to synthetic data
+        if fitObj.params['N0'].vary == False: tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[
+            0]  # Remove variation in initial synthetic data if not fitting initial conditions;
+        # otherwise this will blow up the residual variance as no fit can ever do well on the IC
+        currParams = fitObj.params.copy()
+        if shuffle_params:  # Generate a random initial parameter guess
+            for param in paramsToEstimateList:
+                currParams[param].value = np.random.uniform(low=currParams[param].min,
+                                                            high=currParams[param].max)
+        # Fit
+        tmpModel = MakeModelFromStr(fitObj.modelName)
+        currFitObj = minimize(residual, currParams, args=(0, tmpDataDf, tmpModel,
+                                                          "Confluence", kwargs.get('solver_kws', {})),
+                              **kwargs.get('optimiser_kws', {}))
+        # Record parameter estimates for CI estimation
+        for i, param in enumerate(paramsToEstimateList):
+            parameterEstimatesMat[bootstrapId, i] = currFitObj.params[param].value
+        parameterEstimatesMat[bootstrapId, -1] = np.sum(np.square(currFitObj.residual))
+    # Return results
+    resultsDf = pd.DataFrame(parameterEstimatesMat, columns=paramsToEstimateList+['SSR'])
+    if outName is not None: resultsDf.to_csv(outName)
+    return resultsDf
 
-def PlotParameterDistribution_bars(summaryDf, exampleFit, x="PatientId", showAll=False,
-                                   nCols=5, palette=None, figsize=(12, 4), ax=None):
-    paramNamesList = list(exampleFit.params.keys()) if showAll else exampleFit.var_names
-    nParams = len(paramNamesList)
+# ====================================================================================
+def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95,
+                                          treatmentScheduleList=None, initialConditionsList=None,
+                                          t_eval=None, n_time_steps=100,
+                                          show_progress=True, **kwargs):
+    # Initialise
+    t_eval = np.linspace(fitObj.data.Time.min(), fitObj.data.Time.max(), n_time_steps) if t_eval is None else t_eval
+    n_timePoints = len(t_eval)
+    treatmentScheduleList = treatmentScheduleList if treatmentScheduleList is not None else utils.ExtractTreatmentFromDf(
+        fitObj.data)
+    n_bootstraps = bootstrapResultsDf.shape[0]
 
-    if ax is None: fig, axList = plt.subplots(ceil(nParams/nCols), nCols, figsize=figsize)
-    nPatients = summaryDf.shape[0]
-    for i, param in enumerate(paramNamesList):
-        currAx = axList.flatten()[i]
-        sns.barplot(x=x,y=param, edgecolor=".2", linewidth=2.5, palette=palette, data=summaryDf, ax=currAx)
-        currAx.errorbar(x=np.arange(0,summaryDf.shape[0]), y=summaryDf[param],
-                 yerr=summaryDf[param+"_se"].values,
-                 fmt='none', c='black', capsize=3)
-        currAx.hlines(xmin=-1, xmax=nPatients+1, y=exampleFit.params[param].min, linestyles='--')
-        currAx.hlines(xmin=-1, xmax=nPatients+1, y=exampleFit.params[param].max, linestyles='--')
-        currAx.set_xlabel("")
-        currAx.set_ylim(0.75*exampleFit.params[param].min, 1.25*exampleFit.params[param].max)
-        sns.despine(ax=currAx, offset=5, trim=True)
-        currAx.tick_params(labelsize=24, rotation=45)
-        currAx.set_xlabel("")
-        currAx.set_ylabel("")
-        currAx.set_title(param)
-    plt.tight_layout()
+    # 1. Perform bootstrapping
+    modelPredictionsMat_mean = np.zeros(
+        (n_bootstraps, n_timePoints))  # Array to hold model predictions for CI estimation
+    modelPredictionsMat_indv = np.zeros(
+        (n_bootstraps, n_timePoints))  # Array to hold model predictions with residual variance for PI estimation
+    for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
+        # Set up the model using the parameters from a bootstrap fit
+        tmpModel = MakeModelFromStr(fitObj.modelName)
+        currParams = fitObj.params.copy()
+        for var in bootstrapResultsDf.columns:
+            if var == "SSR": continue
+            currParams[var].value = bootstrapResultsDf[var].iloc[bootstrapId]
+        tmpModel.SetParams(**currParams)
+        # Calculate confidence intervals for model prediction
+        if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
+        tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList,
+                          solver_kws=kwargs.get('solver_kws', {}))
+        tmpModel.Trim(t_eval=t_eval)
+        residual_variance_currEstimate = bootstrapResultsDf['SSR'].iloc[
+                                             bootstrapId] / fitObj.nfree  # XXX Watch this when extending to treatment model XXX
+        modelPredictionsMat_mean[bootstrapId, :] = tmpModel.resultsDf.TumourSize.values
+        modelPredictionsMat_indv[bootstrapId, :] = tmpModel.resultsDf.TumourSize.values + np.random.normal(loc=0,
+                                                                                                           scale=np.sqrt(
+                                                                                                               residual_variance_currEstimate),
+                                                                                                           size=n_timePoints)
+
+    # 3. Estimate confidence and prediction interval for model prediction
+    tmpDicList = []
+    # Compute the model prediction for the model with the MLE parameter estimates
+    tmpModel.SetParams(**fitObj.params)  # Calculate model prediction for best fit
+    if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
+    if treatmentScheduleList is None: treatmentScheduleList = utils.ExtractTreatmentFromDf(fitObj.data)
+    tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList,
+                      solver_kws=kwargs.get('solver_kws', {}))
+    tmpModel.Trim(t_eval=t_eval)
+    for i, t in enumerate(t_eval):
+        tmpDicList.append({"Time": t, "Estimate_MLE": tmpModel.resultsDf.TumourSize.iloc[i],
+                           "CI_Lower_Bound": np.percentile(modelPredictionsMat_mean[:, i], (1 - alpha) * 100 / 2),
+                           "CI_Upper_Bound": np.percentile(modelPredictionsMat_mean[:, i],
+                                                           (alpha + (1 - alpha) / 2) * 100),
+                           "PI_Lower_Bound": np.percentile(modelPredictionsMat_indv[:, i], (1 - alpha) * 100 / 2),
+                           "PI_Upper_Bound": np.percentile(modelPredictionsMat_indv[:, i],
+                                                           (alpha + (1 - alpha) / 2) * 100)})
+    modelPredictionDf = pd.DataFrame(tmpDicList)
+
+    return modelPredictionDf
+
+# ====================================================================================
+def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialConditionsList=None,
+                                  show_progress=True, **kwargs):
+    # Initialise
+    n_bootstraps = bootstrapResultsDf.shape[0]
+
+    # Compute the r2 value for each bootstrap
+    tmpDicList = []
+    for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
+        # Set up the model using the parameters from a bootstrap fit
+        tmpModel = MakeModelFromStr(fitObj.modelName)
+        currParams = fitObj.params.copy()
+        for var in bootstrapResultsDf.columns:
+            if var == "SSR": continue
+            currParams[var].value = bootstrapResultsDf[var].iloc[bootstrapId]
+        if initialConditionsList is not None:
+            for var in initialConditionsList.keys():
+                currParams[var].value = initialConditionsList[var]
+
+        # Make prediction and compare to true data
+        tmpModel.residual = residual(data=dataDf, model=tmpModel, params=currParams,
+                                  x=None, feature="Confluence", solver_kws=kwargs.get('solver_kws', {}))
+        r2Val = ComputeRSquared(fit=tmpModel, dataDf=dataDf, feature="Confluence")
+
+        # Save results
+        tmpDicList.append({"Model":fitObj.modelName, "BootstrapId":bootstrapId,
+                           "rSquared":r2Val})
+    return pd.DataFrame(tmpDicList)
+
+# ====================================================================================
+def compute_confidenceInterval_parameters(fitObj, bootstrapResultsDf, alpha=0.95):
+    # Initialise
+    paramsToEstimateList = [param for param in fitObj.params.keys() if fitObj.params[param].vary]
+
+    # Estimate confidence intervals for parameters from bootstraps
+    tmpDicList = []
+    for i, param in enumerate(paramsToEstimateList):
+        tmpDicList.append({"Parameter": param, "Estimate_MLE": fitObj.params[param].value,
+                           "Lower_Bound": np.percentile(bootstrapResultsDf[param].values, (1 - alpha) * 100 / 2),
+                           "Upper_Bound": np.percentile(bootstrapResultsDf[param].values,
+                                                        (alpha + (1 - alpha) / 2) * 100)})
+    return pd.DataFrame(tmpDicList)
