@@ -14,7 +14,8 @@ from odeModelClass import ODEModel
 # ======================== House Keeping Funs ==========================================
 def MakeModelFromStr(modelName,**kwargs):
     funList = {"Exponential":Exponential, "Logistic":Logistic, "Gompertz":Gompertz,
-               "vonBertalanffy":vonBertalanffy, "GeneralisedLogistic":GeneralisedLogistic}
+               "vonBertalanffy":vonBertalanffy, "GeneralisedLogistic":GeneralisedLogistic,
+               "CycleArrestModel_singleStep":CycleArrestModel_singleStep}
     return funList[modelName](**kwargs)
 
 # ======================= Growth Models =======================================
@@ -113,4 +114,31 @@ class GeneralisedLogistic(ODEModel):
         dudtVec = np.zeros_like(uVec)
         dudtVec[0] = self.paramDic['r'] * (1 - np.power(N / self.paramDic['K'], self.paramDic['v'])) * N
         dudtVec[1] = 0
+        return (dudtVec)
+
+# ======================= Treatment Models =======================================
+# ----------------- Single Step Model -------------------------
+class CycleArrestModel_singleStep(ODEModel):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.name = "CycleArrestModel_singleStep"
+        self.paramDic = {**self.paramDic,
+            'r': 0.03,
+            'K': 100,
+            'v': 2 / 3,
+            'd_A':1.,
+            'alpha': 0.01,
+            'beta': 0.01,
+            'P0': 10,
+            'A0':0}
+        self.stateVars = ['P', 'A']
+
+    # The governing equations
+    def ModelEqns(self, t, uVec):
+        P, A, D = uVec
+        D_hat = D/self.paramDic['DMax']
+        dudtVec = np.zeros_like(uVec)
+        dudtVec[0] = self.paramDic['r'] * (1 - np.power((P + A) / self.paramDic['K'], self.paramDic['v'])) * (1-2*self.paramDic['alpha']*D_hat) * P + self.paramDic['beta']*A
+        dudtVec[1] = self.paramDic['alpha'] * self.paramDic['r'] * (1 - np.power((P + A) / self.paramDic['K'], self.paramDic['v'])) * D_hat * P - (self.paramDic['d_A']+self.paramDic['beta'])*A
+        dudtVec[2] = 0
         return (dudtVec)

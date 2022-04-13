@@ -140,7 +140,7 @@ def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
     return pd.DataFrame(tmpDicList)
 
 # ====================================================================================
-def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, show_progress=True, outName=None, **kwargs):
+def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experiment_df=None, show_progress=True, outName=None, **kwargs):
     '''
     Function to estimate uncertainty in the parameter estimates and model predictions using a
     parametric bootstrapping method. This means, it uses the maximum likelihood estimate (best fit
@@ -163,16 +163,24 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, show_progress
         tmpDataDf['Confluence'] = bestFitPrediction + np.random.normal(loc=0, scale=np.sqrt(residual_variance),
                                                                        size=fitObj.ndata)
         # ii) Fit to synthetic data
-        if fitObj.params['N0'].vary == False: tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[
-            0]  # Remove variation in initial synthetic data if not fitting initial conditions;
-        # otherwise this will blow up the residual variance as no fit can ever do well on the IC
+        tmpModel = MakeModelFromStr(fitObj.modelName)
         currParams = fitObj.params.copy()
-        if shuffle_params:  # Generate a random initial parameter guess
+        # Remove variation in initial synthetic data if not fitting initial conditions;
+        # otherwise this will blow up the residual variance as no fit can ever do well on the IC
+        areIcsVariedList = [fitObj.params[stateVar+'0'].vary for stateVar in tmpModel.stateVars]
+        if not np.any(areIcsVariedList): tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[0]
+        # In developing our model we proceed in a series of steps. To propagate the error along
+        # as we advance to the next step, allow reading in previous bootstraps here.
+        if prior_experiment_df is not None:
+            for var in prior_experiment_df.columns:
+                if var == "SSR": continue
+                currParams[var].value = prior_experiment_df[var].iloc[bootstrapId]
+        # Generate a random initial parameter guess
+        if shuffle_params:
             for param in paramsToEstimateList:
                 currParams[param].value = np.random.uniform(low=currParams[param].min,
                                                             high=currParams[param].max)
         # Fit
-        tmpModel = MakeModelFromStr(fitObj.modelName)
         currFitObj = minimize(residual, currParams, args=(0, tmpDataDf, tmpModel,
                                                           "Confluence", kwargs.get('solver_kws', {})),
                               **kwargs.get('optimiser_kws', {}))
@@ -180,8 +188,10 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, show_progress
         for i, param in enumerate(paramsToEstimateList):
             parameterEstimatesMat[bootstrapId, i] = currFitObj.params[param].value
         parameterEstimatesMat[bootstrapId, -1] = np.sum(np.square(currFitObj.residual))
+
     # Return results
     resultsDf = pd.DataFrame(parameterEstimatesMat, columns=paramsToEstimateList+['SSR'])
+    if prior_experiment_df is not None: resultsDf = pd.concat([prior_experiment_df.drop('SSR',axis=1), resultsDf], axis=1)
     if outName is not None: resultsDf.to_csv(outName)
     return resultsDf
 
@@ -193,15 +203,16 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     # Initialise
     t_eval = np.linspace(fitObj.data.Time.min(), fitObj.data.Time.max(), n_time_steps) if t_eval is None else t_eval
     n_timePoints = len(t_eval)
+    n_stateVars = len(MakeModelFromStr(fitObj.modelName).stateVars)
     treatmentScheduleList = treatmentScheduleList if treatmentScheduleList is not None else utils.ExtractTreatmentFromDf(
         fitObj.data)
     n_bootstraps = bootstrapResultsDf.shape[0]
 
     # 1. Perform bootstrapping
     modelPredictionsMat_mean = np.zeros(
-        (n_bootstraps, n_timePoints))  # Array to hold model predictions for CI estimation
+        (n_bootstraps, n_timePoints, n_stateVars+1))  # Array to hold model predictions for CI estimation
     modelPredictionsMat_indv = np.zeros(
-        (n_bootstraps, n_timePoints))  # Array to hold model predictions with residual variance for PI estimation
+        (n_bootstraps, n_timePoints, n_stateVars+1))  # Array to hold model predictions with residual variance for PI estimation
     for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
         # Set up the model using the parameters from a bootstrap fit
         tmpModel = MakeModelFromStr(fitObj.modelName)
@@ -216,12 +227,13 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
                           solver_kws=kwargs.get('solver_kws', {}))
         tmpModel.Trim(t_eval=t_eval)
         residual_variance_currEstimate = bootstrapResultsDf['SSR'].iloc[
-                                             bootstrapId] / fitObj.nfree  # XXX Watch this when extending to treatment model XXX
-        modelPredictionsMat_mean[bootstrapId, :] = tmpModel.resultsDf.TumourSize.values
-        modelPredictionsMat_indv[bootstrapId, :] = tmpModel.resultsDf.TumourSize.values + np.random.normal(loc=0,
-                                                                                                           scale=np.sqrt(
-                                                                                                               residual_variance_currEstimate),
-                                                                                                           size=n_timePoints)
+                                             bootstrapId] / fitObj.nfree  # XXX Not sure this is correct for hierarchical model structure. Thus, PIs not used in paper XXX
+        for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
+            modelPredictionsMat_mean[bootstrapId, :, stateVarId] = tmpModel.resultsDf[var].values
+            modelPredictionsMat_indv[bootstrapId, :, stateVarId] = tmpModel.resultsDf[var].values + np.random.normal(loc=0,
+                                                                                                               scale=np.sqrt(
+                                                                                                                   residual_variance_currEstimate),
+                                                                                                               size=n_timePoints)
 
     # 3. Estimate confidence and prediction interval for model prediction
     tmpDicList = []
@@ -233,15 +245,15 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
                       solver_kws=kwargs.get('solver_kws', {}))
     tmpModel.Trim(t_eval=t_eval)
     for i, t in enumerate(t_eval):
-        tmpDicList.append({"Time": t, "Estimate_MLE": tmpModel.resultsDf.TumourSize.iloc[i],
-                           "CI_Lower_Bound": np.percentile(modelPredictionsMat_mean[:, i], (1 - alpha) * 100 / 2),
-                           "CI_Upper_Bound": np.percentile(modelPredictionsMat_mean[:, i],
-                                                           (alpha + (1 - alpha) / 2) * 100),
-                           "PI_Lower_Bound": np.percentile(modelPredictionsMat_indv[:, i], (1 - alpha) * 100 / 2),
-                           "PI_Upper_Bound": np.percentile(modelPredictionsMat_indv[:, i],
-                                                           (alpha + (1 - alpha) / 2) * 100)})
+        for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
+            tmpDicList.append({"Time": t, "Variable":var, "Estimate_MLE": tmpModel.resultsDf[var].iloc[i],
+                               "CI_Lower_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId], (1 - alpha) * 100 / 2),
+                               "CI_Upper_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId],
+                                                               (alpha + (1 - alpha) / 2) * 100),
+                               "PI_Lower_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId], (1 - alpha) * 100 / 2),
+                               "PI_Upper_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId],
+                                                               (alpha + (1 - alpha) / 2) * 100)})
     modelPredictionDf = pd.DataFrame(tmpDicList)
-
     return modelPredictionDf
 
 # ====================================================================================
