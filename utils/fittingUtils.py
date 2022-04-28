@@ -140,7 +140,8 @@ def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
     return pd.DataFrame(tmpDicList)
 
 # ====================================================================================
-def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experiment_df=None, show_progress=True, outName=None, **kwargs):
+def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experiment_df=None, model_kws={},
+                      show_progress=True, outName=None, **kwargs):
     '''
     Function to estimate uncertainty in the parameter estimates and model predictions using a
     parametric bootstrapping method. This means, it uses the maximum likelihood estimate (best fit
@@ -163,7 +164,7 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
         tmpDataDf['Confluence'] = bestFitPrediction + np.random.normal(loc=0, scale=np.sqrt(residual_variance),
                                                                        size=fitObj.ndata)
         # ii) Fit to synthetic data
-        tmpModel = MakeModelFromStr(fitObj.modelName)
+        tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
         currParams = fitObj.params.copy()
         # Remove variation in initial synthetic data if not fitting initial conditions;
         # otherwise this will blow up the residual variance as no fit can ever do well on the IC
@@ -189,6 +190,11 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
             parameterEstimatesMat[bootstrapId, i] = currFitObj.params[param].value
         parameterEstimatesMat[bootstrapId, -1] = np.sum(np.square(currFitObj.residual))
 
+        # plt.plot(tmpDataDf.Time, tmpDataDf.Confluence, linestyle="", marker='o', linewidth=3)
+        # plt.plot(tmpDataDf.Time, tmpDataDf.Confluence-currFitObj.residual, linewidth=3, linestyle="-")
+        # plt.plot(fitObj.data.Time, bestFitPrediction, linewidth=5, linestyle="-")
+        # plt.ylim(0,100)
+
     # Return results
     resultsDf = pd.DataFrame(parameterEstimatesMat, columns=paramsToEstimateList+['SSR'])
     if prior_experiment_df is not None: resultsDf = pd.concat([prior_experiment_df.drop('SSR',axis=1), resultsDf], axis=1)
@@ -197,13 +203,13 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
 
 # ====================================================================================
 def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95,
-                                          treatmentScheduleList=None, initialConditionsList=None,
+                                          treatmentScheduleList=None, initialConditionsList=None, model_kws={},
                                           t_eval=None, n_time_steps=100,
                                           show_progress=True, **kwargs):
     # Initialise
     t_eval = np.linspace(fitObj.data.Time.min(), fitObj.data.Time.max(), n_time_steps) if t_eval is None else t_eval
     n_timePoints = len(t_eval)
-    n_stateVars = len(MakeModelFromStr(fitObj.modelName).stateVars)
+    n_stateVars = len(MakeModelFromStr(fitObj.modelName, **model_kws).stateVars)
     treatmentScheduleList = treatmentScheduleList if treatmentScheduleList is not None else utils.ExtractTreatmentFromDf(
         fitObj.data)
     n_bootstraps = bootstrapResultsDf.shape[0]
@@ -215,7 +221,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
         (n_bootstraps, n_timePoints, n_stateVars+1))  # Array to hold model predictions with residual variance for PI estimation
     for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
         # Set up the model using the parameters from a bootstrap fit
-        tmpModel = MakeModelFromStr(fitObj.modelName)
+        tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
         currParams = fitObj.params.copy()
         for var in bootstrapResultsDf.columns:
             if var == "SSR": continue
@@ -223,8 +229,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
         tmpModel.SetParams(**currParams)
         # Calculate confidence intervals for model prediction
         if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
-        tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList,
-                          solver_kws=kwargs.get('solver_kws', {}))
+        tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList, **kwargs.get('solver_kws', {}))
         tmpModel.Trim(t_eval=t_eval)
         residual_variance_currEstimate = bootstrapResultsDf['SSR'].iloc[
                                              bootstrapId] / fitObj.nfree  # XXX Not sure this is correct for hierarchical model structure. Thus, PIs not used in paper XXX
@@ -241,8 +246,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     tmpModel.SetParams(**fitObj.params)  # Calculate model prediction for best fit
     if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
     if treatmentScheduleList is None: treatmentScheduleList = utils.ExtractTreatmentFromDf(fitObj.data)
-    tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList,
-                      solver_kws=kwargs.get('solver_kws', {}))
+    tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList, **kwargs.get('solver_kws', {}))
     tmpModel.Trim(t_eval=t_eval)
     for i, t in enumerate(t_eval):
         for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
@@ -257,7 +261,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     return modelPredictionDf
 
 # ====================================================================================
-def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialConditionsList=None,
+def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialConditionsList=None, model_kws={},
                                   show_progress=True, **kwargs):
     # Initialise
     n_bootstraps = bootstrapResultsDf.shape[0]
@@ -266,7 +270,7 @@ def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialCon
     tmpDicList = []
     for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
         # Set up the model using the parameters from a bootstrap fit
-        tmpModel = MakeModelFromStr(fitObj.modelName)
+        tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
         currParams = fitObj.params.copy()
         for var in bootstrapResultsDf.columns:
             if var == "SSR": continue
