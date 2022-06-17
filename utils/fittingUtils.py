@@ -207,7 +207,12 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
                                           t_eval=None, n_time_steps=100,
                                           show_progress=True, **kwargs):
     # Initialise
-    t_eval = np.linspace(fitObj.data.Time.min(), fitObj.data.Time.max(), n_time_steps) if t_eval is None else t_eval
+    if t_eval is None:
+        if treatmentScheduleList is None:
+            currPredictionTimeFrame = [fitObj.data.Time.min(), fitObj.data.Time.max()]
+        else:
+            currPredictionTimeFrame = [treatmentScheduleList[0][0], treatmentScheduleList[-1][1]]
+        t_eval = np.linspace(currPredictionTimeFrame[0], currPredictionTimeFrame[1], n_time_steps) if t_eval is None else t_eval
     n_timePoints = len(t_eval)
     n_stateVars = len(MakeModelFromStr(fitObj.modelName, **model_kws).stateVars)
     treatmentScheduleList = treatmentScheduleList if treatmentScheduleList is not None else utils.ExtractTreatmentFromDf(
