@@ -183,7 +183,7 @@ class CycleArrestModel_multiStep(ODEModel):
         dudtVec[-1] = 0
         return (dudtVec)
 
-# ------------ Multi-step model that allows for n rounds of divisions before cell goes into arrest ------------
+# --- Multi-step model that assumes even once damaged a cell may continue to proliferate, but is on its "way to death" ---
 class CycleArrestModel_multiStep_2phase(ODEModel):
     def __init__(self, n_steps=1, **kwargs):
         super().__init__(**kwargs)
@@ -225,7 +225,7 @@ class CycleArrestModel_multiStep_2phase(ODEModel):
         dudtVec[-1] = 0
         return (dudtVec)
 
-# ------ 2-Compartment Simplification that allows for extra divisions, but doesn't track these explicitely ---------
+# ------ 2-compartment simplification that allows for extra divisions, but doesn't track these explicitely ---------
 class CycleArrestModel_singleStep_extraDivs(ODEModel):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
