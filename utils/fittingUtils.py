@@ -141,7 +141,8 @@ def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
 
 # ====================================================================================
 def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experiment_df=None, model_kws={},
-                      show_progress=True, outName=None, **kwargs):
+                      residual_fun=residual, n_conditions=1,
+                      show_progress=True, plot_bootstraps=False, outName=None, **kwargs):
     '''
     Function to estimate uncertainty in the parameter estimates and model predictions using a
     parametric bootstrapping method. This means, it uses the maximum likelihood estimate (best fit
@@ -169,7 +170,11 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
         # Remove variation in initial synthetic data if not fitting initial conditions;
         # otherwise this will blow up the residual variance as no fit can ever do well on the IC
         areIcsVariedList = [fitObj.params[stateVar+'0'].vary for stateVar in tmpModel.stateVars]
-        if not np.any(areIcsVariedList): tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[0]
+        if not np.any(areIcsVariedList):
+            if n_conditions==1:
+                tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[0]
+            else: # If fitting to multiple experiments simultaneously, remove variation from each experiment separately
+                tmpDataDf.loc[tmpDataDf.Time==0, 'Confluence'] = fitObj.data[fitObj.data.Time==0].Confluence.values
         # In developing our model we proceed in a series of steps. To propagate the error along
         # as we advance to the next step, allow reading in previous bootstraps here.
         if prior_experiment_df is not None:
@@ -182,7 +187,7 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
                 currParams[param].value = np.random.uniform(low=currParams[param].min,
                                                             high=currParams[param].max)
         # Fit
-        currFitObj = minimize(residual, currParams, args=(0, tmpDataDf, tmpModel,
+        currFitObj = minimize(residual_fun, currParams, args=(0, tmpDataDf, tmpModel,
                                                           "Confluence", kwargs.get('solver_kws', {})),
                               **kwargs.get('optimiser_kws', {}))
         # Record parameter estimates for CI estimation
@@ -190,10 +195,13 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
             parameterEstimatesMat[bootstrapId, i] = currFitObj.params[param].value
         parameterEstimatesMat[bootstrapId, -1] = np.sum(np.square(currFitObj.residual))
 
-        # plt.plot(tmpDataDf.Time, tmpDataDf.Confluence, linestyle="", marker='o', linewidth=3)
-        # plt.plot(tmpDataDf.Time, tmpDataDf.Confluence-currFitObj.residual, linewidth=3, linestyle="-")
-        # plt.plot(fitObj.data.Time, bestFitPrediction, linewidth=5, linestyle="-")
-        # plt.ylim(0,100)
+        # Plot the synthetic data and the individual bootstrap fits. This is useful for i) understanding what
+        # the method is doing, and ii) debugging.
+        if plot_bootstraps:
+            plt.plot(tmpDataDf.Time, tmpDataDf.Confluence, linestyle="", marker='o', linewidth=3)
+            plt.plot(tmpDataDf.Time, tmpDataDf.Confluence-currFitObj.residual, linewidth=3, linestyle="-")
+            plt.plot(fitObj.data.Time, bestFitPrediction, linewidth=5, linestyle="-")
+            plt.ylim(0,100)
 
     # Return results
     resultsDf = pd.DataFrame(parameterEstimatesMat, columns=paramsToEstimateList+['SSR'])
