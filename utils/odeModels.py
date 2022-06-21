@@ -18,7 +18,8 @@ def MakeModelFromStr(modelName,**kwargs):
                "CycleArrestModel_singleStep":CycleArrestModel_singleStep,
                "CycleArrestModel_multiStep":CycleArrestModel_multiStep,
                "CycleArrestModel_multiStep_2phase":CycleArrestModel_multiStep_2phase,
-               "CycleArrestModel_singleStep_extraDivs":CycleArrestModel_singleStep_extraDivs}
+               "CycleArrestModel_singleStep_extraDivs":CycleArrestModel_singleStep_extraDivs,
+               "CycleArrestModel_singleStep_extraDivs_dr":CycleArrestModel_singleStep_extraDivs_dr}
     return funList[modelName](**kwargs)
 
 # ======================= Growth Models =======================================
@@ -248,5 +249,34 @@ class CycleArrestModel_singleStep_extraDivs(ODEModel):
         dudtVec = np.zeros_like(uVec)
         dudtVec[0] = self.paramDic['r'] * (1 - np.power((P + A) / self.paramDic['K'], self.paramDic['v'])) * (1-2*self.paramDic['alpha']*D_hat) * P
         dudtVec[1] = (1+self.paramDic['phi']) * self.paramDic['alpha'] * self.paramDic['r'] * (1 - np.power((P + A) / self.paramDic['K'], self.paramDic['v'])) * D_hat * P - self.paramDic['d_A']*A
+        dudtVec[2] = 0
+        return (dudtVec)
+
+# ------ Final model (Model 5), assuming 2 compartments and a non-linear dose-response ---------
+class CycleArrestModel_singleStep_extraDivs_dr(ODEModel):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.name = "CycleArrestModel_singleStep_extraDivs_dr"
+        self.paramDic = {**self.paramDic,
+            'r': 0.03,
+            'K': 100,
+            'v': 2 / 3,
+            'd_A':1.,
+            'alpha': 0.01,
+            'phi': 0.5,
+            'n': 1,
+            'EC50':50,
+            'P0': 10,
+            'A0':0}
+        self.stateVars = ['P', 'A']
+
+    # The governing equations
+    def ModelEqns(self, t, uVec):
+        P, A, D = uVec
+        DE = np.power(D, self.paramDic['n']) / (
+                    np.power(self.paramDic['EC50'], self.paramDic['n']) + np.power(D, self.paramDic['n']))
+        dudtVec = np.zeros_like(uVec)
+        dudtVec[0] = self.paramDic['r'] * (1 - np.power((P + A) / self.paramDic['K'], self.paramDic['v'])) * (1-2*self.paramDic['alpha']*DE) * P
+        dudtVec[1] = (1+self.paramDic['phi']) * self.paramDic['alpha'] * self.paramDic['r'] * (1 - np.power((P + A) / self.paramDic['K'], self.paramDic['v'])) * DE * P - self.paramDic['d_A']*A
         dudtVec[2] = 0
         return (dudtVec)
