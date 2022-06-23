@@ -303,9 +303,10 @@ def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialCon
     return pd.DataFrame(tmpDicList)
 
 # ====================================================================================
-def compute_confidenceInterval_parameters(fitObj, bootstrapResultsDf, alpha=0.95):
+def compute_confidenceInterval_parameters(fitObj, bootstrapResultsDf, paramsToEstimateList=None, alpha=0.95):
     # Initialise
-    paramsToEstimateList = [param for param in fitObj.params.keys() if fitObj.params[param].vary]
+    if paramsToEstimateList is None:
+        paramsToEstimateList = [param for param in fitObj.params.keys() if fitObj.params[param].vary]
 
     # Estimate confidence intervals for parameters from bootstraps
     tmpDicList = []
