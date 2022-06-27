@@ -133,7 +133,7 @@ class ODEModel():
         dose = self.paramDic['DMax'] if D0 is None else D0
         lastNonZeroDose = dose # Remember the last non-zero dose if withdraw drug
         currCycleId = 0
-        while (currInterval[1] <= t_end) and (currCycleId < nCycles):
+        while (currInterval[1] <= t_end + intervalLength) and (currCycleId < nCycles):
             # Simulate
             # print(currInterval,refSize)
             self.Simulate([[currInterval[0], currInterval[1], dose]], **solver_kws)
@@ -169,7 +169,7 @@ class ODEModel():
         dose = self.paramDic['DMax'] if D0 is None else D0
         D_star = self.paramDic['DMax'] if D_star is None else D_star
         currCycleId = 0
-        while (currInterval[1] <= t_end) and (currCycleId < nCycles):
+        while (currInterval[1] <= t_end + intervalLength) and (currCycleId < nCycles):
             # Simulate
             # print(currInterval,refSize)
             self.Simulate([[currInterval[0], currInterval[1], dose]], **solver_kws)
@@ -205,7 +205,7 @@ class ODEModel():
         dose = self.paramDic['DMax']
         D_Star = self.paramDic['DMax'] if D_Star is None else D_Star
         currCycleId = 0
-        while (currInterval[1] <= t_end) and (currCycleId < nCycles):
+        while (currInterval[1] <= t_end + intervalLength) and (currCycleId < nCycles):
             # Simulate
             # print(currInterval,refSize)
             self.Simulate([[currInterval[0], currInterval[1], dose]], **solver_kws)
