@@ -231,44 +231,6 @@ class ODEModel():
         self.resultsDf.drop_duplicates(inplace=True)
 
     # =========================================================================================
-    # Simulate adaptive therapy (maintain tumour size via dose modulation)
-    def Simulate_Titration(self, refSize=None, atThreshold=0.2, doseAdjustFac=0.5, D0=None, v_min=0, D_min=0, intervalLength_on=1., intervalLength_off=None,
-                     t_end=1000, nCycles=np.inf, t_span=None, solver_kws={}):
-        intervalLength_off = intervalLength_on if intervalLength_off is None else intervalLength_off
-        intervalLength = intervalLength_on
-        t_span = t_span if t_span is not None else (0, t_end)
-        currInterval = [t_span[0], t_span[0] + intervalLength]
-        refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList) if refSize is None else refSize
-        dose = self.paramDic['DMax'] if D0 is None else D0
-        currCycleId = 0
-        while (currInterval[1] <= t_end) and (currCycleId < nCycles):
-            # Simulate
-            # print(currInterval,refSize)
-            self.Simulate([[currInterval[0], currInterval[1], dose]], **solver_kws)
-
-            # Update dose
-            # print(self.resultsDf.TumourSize.iat[-1],(1+atThreshold)*refSize)
-            intervalLength = intervalLength_on
-            if self.resultsDf.TumourSize.iat[-1] < v_min:  # Withdraw treatment below a certain size
-                dose = 0
-            elif self.resultsDf.TumourSize.iat[-1] < (1 - atThreshold) * refSize:  # Reduce dose if sufficient shrinkage
-                # dose = max((1 - doseAdjustFac) * dose, 0)
-                dose = max(dose-doseAdjustFac*self.paramDic['DMax'], D_min)
-                intervalLength = intervalLength_off
-            elif self.resultsDf.TumourSize.iat[-1] > (1 + atThreshold) * refSize:  # Increase dose if excessive growth
-                # dose = min((1 + doseAdjustFac) * dose, self.paramDic['DMax'])
-                dose = min(dose+doseAdjustFac*self.paramDic['DMax'], self.paramDic['DMax'])
-            else:  # If size remains within a window of +- atThreshold, keep the same dose
-                dose = dose
-
-            # Update interval
-            currInterval = [x + intervalLength for x in currInterval]
-            currCycleId += 1
-
-        # Clean up the data frame
-        self.resultsDf.drop_duplicates(inplace=True)
-
-    # =========================================================================================
     # Interpolate to specific time resolution (e.g. for plotting)
     def Trim(self, t_eval=None, dt=1):
         t_eval = np.arange(0, self.resultsDf.Time.max(), dt) if t_eval is None else t_eval
