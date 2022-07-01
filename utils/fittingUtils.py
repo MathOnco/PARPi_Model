@@ -211,13 +211,17 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
 
 # ====================================================================================
 def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95,
-                                          treatmentScheduleList=None, initialConditionsList=None, model_kws={},
+                                          treatmentScheduleList=None, atToProfile=None, at_kws={},
+                                          initialConditionsList=None, model_kws={},
                                           t_eval=None, n_time_steps=100,
                                           show_progress=True, **kwargs):
     # Initialise
     if t_eval is None:
         if treatmentScheduleList is None:
-            currPredictionTimeFrame = [fitObj.data.Time.min(), fitObj.data.Time.max()]
+            if atToProfile is None:
+                currPredictionTimeFrame = [fitObj.data.Time.min(), fitObj.data.Time.max()]
+            else:
+                currPredictionTimeFrame = [0, at_kws.get('t_end', 20)]
         else:
             currPredictionTimeFrame = [treatmentScheduleList[0][0], treatmentScheduleList[-1][1]]
         t_eval = np.linspace(currPredictionTimeFrame[0], currPredictionTimeFrame[1], n_time_steps) if t_eval is None else t_eval
@@ -242,7 +246,10 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
         tmpModel.SetParams(**currParams)
         # Calculate confidence intervals for model prediction
         if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
-        tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList, **kwargs.get('solver_kws', {}))
+        if atToProfile is None: # Do prediction on a fixed schedule
+            tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList, **kwargs.get('solver_kws', {}))
+        else: # Do prediction on an adaptive schedule, which may be different for each replicate, depending on the dynamics
+            getattr(tmpModel, 'Simulate_'+atToProfile)(**at_kws, solver_kws=kwargs.get('solver_kws', {}))
         tmpModel.Trim(t_eval=t_eval)
         residual_variance_currEstimate = bootstrapResultsDf['SSR'].iloc[
                                              bootstrapId] / fitObj.nfree  # XXX Not sure this is correct for hierarchical model structure. Thus, PIs not used in paper XXX
@@ -259,11 +266,15 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     tmpModel.SetParams(**fitObj.params)  # Calculate model prediction for best fit
     if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
     if treatmentScheduleList is None: treatmentScheduleList = utils.ExtractTreatmentFromDf(fitObj.data)
-    tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList, **kwargs.get('solver_kws', {}))
+    if atToProfile is None: # Do prediction on a fixed schedule
+        tmpModel.Simulate(treatmentScheduleList=treatmentScheduleList, **kwargs.get('solver_kws', {}))
+    else: # Do prediction on an adaptive schedule, which may be different for each replicate, depending on the dynamics
+        getattr(tmpModel, 'Simulate_'+atToProfile)(**at_kws, solver_kws=kwargs.get('solver_kws', {}))
     tmpModel.Trim(t_eval=t_eval)
     for i, t in enumerate(t_eval):
         for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
             tmpDicList.append({"Time": t, "Variable":var, "Estimate_MLE": tmpModel.resultsDf[var].iloc[i],
+                               "DrugConcentration": tmpModel.resultsDf['DrugConcentration'].iloc[i],
                                "CI_Lower_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId], (1 - alpha) * 100 / 2),
                                "CI_Upper_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId],
                                                                (alpha + (1 - alpha) / 2) * 100),
