@@ -124,12 +124,11 @@ class ODEModel():
 
     # =========================================================================================
     # Simulate adaptive therapy (dose modulation strategy)
-    def Simulate_AT1(self, atThreshold=0.2, doseAdjustFac=0.5, D0=None, v_min=0,intervalLength=1.,
+    def Simulate_AT1(self, atThreshold=0.2, doseAdjustFac=0.5, D0=None, v_min=0, intervalLength=1.,
                      t_end=1000, nCycles=np.inf, t_span=None, solver_kws={}):
         t_span = t_span if t_span is not None else (0, t_end)
         currInterval = [t_span[0], t_span[0] + intervalLength]
-        refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList) if self.resultsDf is None else \
-        self.resultsDf.TumourSize.iloc[-1]
+        refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList)
         dose = self.paramDic['DMax'] if D0 is None else D0
         lastNonZeroDose = dose # Remember the last non-zero dose if withdraw drug
         currCycleId = 0
@@ -164,8 +163,7 @@ class ODEModel():
                      nCycles=np.inf, t_span=None, solver_kws={}):
         t_span = t_span if t_span is not None else (0, t_end)
         currInterval = [t_span[0], t_span[0] + intervalLength]
-        refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList) if self.resultsDf is None else \
-            self.resultsDf.TumourSize.iloc[-1]
+        refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList)
         dose = self.paramDic['DMax'] if D0 is None else D0
         D_star = self.paramDic['DMax'] if D_star is None else D_star
         currCycleId = 0
