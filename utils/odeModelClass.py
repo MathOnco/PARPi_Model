@@ -125,7 +125,7 @@ class ODEModel():
     # =========================================================================================
     # Simulate adaptive therapy (dose modulation strategy)
     def Simulate_AT1(self, atThreshold=0.2, doseAdjustFac=0.5, D0=None, v_min=0, intervalLength=1.,
-                     t_end=1000, nCycles=np.inf, t_span=None, solver_kws={}):
+                     mode="original", t_end=1000, nCycles=np.inf, t_span=None, solver_kws={}):
         t_span = t_span if t_span is not None else (0, t_end)
         currInterval = [t_span[0], t_span[0] + intervalLength]
         refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList)
@@ -144,9 +144,15 @@ class ODEModel():
                 lastNonZeroDose = dose
                 dose = 0
             elif self.resultsDf.TumourSize.iat[-1] < (1 - atThreshold) * refSize: # Reduce dose if sufficient shrinkage
-                dose = max((1 - doseAdjustFac) * dose, 0)
+                if mode is "original":
+                    dose = max((1 - doseAdjustFac) * dose, 0) # Adjustment as proposed in Enriquez-Navas et al (2015)
+                else:
+                    dose = max(1/doseAdjustFac * dose, 0)
             elif self.resultsDf.TumourSize.iat[-1] > (1 + atThreshold) * refSize: # Increase dose if excessive growth
-                dose = min((1+doseAdjustFac)*dose,self.paramDic['DMax'])
+                if mode is "original":
+                    dose = min((1+doseAdjustFac) * dose, self.paramDic['DMax']) # Adjustment as proposed in Enriquez-Navas et al (2015)
+                else:
+                    dose = min(doseAdjustFac * dose, self.paramDic['DMax'])
             else: # If size remains within a window of +- atThreshold, keep the same dose
                 dose = dose
 
@@ -159,11 +165,12 @@ class ODEModel():
 
     # =========================================================================================
     # Simulate adaptive therapy (dose skipping strategy)
-    def Simulate_AT2(self, atThreshold=0.2, D_star=None, D0=None, intervalLength=1., t_end=1000,
+    def Simulate_AT2(self, atThreshold=0.2, D_star=None, D0=None, DMin=0, intervalLength=1., n_days_lookback=2, t_end=1000,
                      nCycles=np.inf, t_span=None, solver_kws={}):
         t_span = t_span if t_span is not None else (0, t_end)
         currInterval = [t_span[0], t_span[0] + intervalLength]
         refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList)
+        prevSizesList = [refSize]*n_days_lookback
         dose = self.paramDic['DMax'] if D0 is None else D0
         D_star = self.paramDic['DMax'] if D_star is None else D_star
         currCycleId = 0
@@ -174,15 +181,19 @@ class ODEModel():
 
             # Update dose
             if self.resultsDf.TumourSize.iat[-1] > (1 + atThreshold) * refSize:  # Treat if excessive growth
-                dose = min(D_star, self.paramDic['DMax'])
-            else:  # Otherwise don't treat
-                dose = 0
+                dose = D_star #min(D_star, self.paramDic['DMax'])
+            else:  # Otherwise treat at minimum dose (=0 in Enriquez-Navas et al)
+                dose = DMin
 
             # Update interval
-            currSize = self.resultsDf.TumourSize.iloc[-1] # AT2 uses the 2 time steps to decide dose
-            # print(currSize,refSize)
-            refSize = prevSize if currCycleId!=0 else refSize # For the initial step
-            prevSize = currSize
+            refSize = prevSizesList[0]
+            prevSizesList[:-1] = prevSizesList[1:]
+            prevSizesList[-1] = self.resultsDf.TumourSize.iloc[-1] # AT2 uses the 2 time steps to decide dose
+            # print(prevSizesList, refSize, dose)
+            # currSize = self.resultsDf.TumourSize.iloc[-1] # AT2 uses the 2 time steps to decide dose
+            # refSize = prevSize if currCycleId!=0 else refSize # For the initial step
+            # prevSize = currSize
+            # print(currSize,refSize, dose)
             currInterval = [x + intervalLength for x in currInterval]
             currCycleId += 1
 
