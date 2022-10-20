@@ -10,6 +10,7 @@ import pickle
 import scipy
 from lmfit import minimize
 from tqdm import tqdm
+import warnings
 if 'matplotlib' not in sys.modules:
     import matplotlib as mpl
     mpl.use('Agg')
@@ -141,7 +142,7 @@ def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
 
 # ====================================================================================
 def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experiment_df=None, model_kws={},
-                      residual_fun=residual, n_conditions=1,
+                      residual_fun=residual, n_conditions=1, max_n_tries=100,
                       show_progress=True, plot_bootstraps=False, outName=None, **kwargs):
     '''
     Function to estimate uncertainty in the parameter estimates and model predictions using a
@@ -165,31 +166,43 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
         tmpDataDf['Confluence'] = bestFitPrediction + np.random.normal(loc=0, scale=np.sqrt(residual_variance),
                                                                        size=fitObj.ndata)
         # ii) Fit to synthetic data
-        tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
-        currParams = fitObj.params.copy()
-        # Remove variation in initial synthetic data if not fitting initial conditions;
-        # otherwise this will blow up the residual variance as no fit can ever do well on the IC
-        areIcsVariedList = [fitObj.params[stateVar+'0'].vary for stateVar in tmpModel.stateVars]
-        if not np.any(areIcsVariedList):
-            if n_conditions==1:
-                tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[0]
-            else: # If fitting to multiple experiments simultaneously, remove variation from each experiment separately
-                tmpDataDf.loc[tmpDataDf.Time==0, 'Confluence'] = fitObj.data[fitObj.data.Time==0].Confluence.values
-        # In developing our model we proceed in a series of steps. To propagate the error along
-        # as we advance to the next step, allow reading in previous bootstraps here.
-        if prior_experiment_df is not None:
-            for var in prior_experiment_df.columns:
-                if var == "SSR": continue
-                currParams[var].value = prior_experiment_df[var].iloc[bootstrapId]
-        # Generate a random initial parameter guess
-        if shuffle_params:
-            for param in paramsToEstimateList:
-                currParams[param].value = np.random.uniform(low=currParams[param].min,
-                                                            high=currParams[param].max)
-        # Fit
-        currFitObj = minimize(residual_fun, currParams, args=(0, tmpDataDf, tmpModel,
-                                                          "Confluence", kwargs.get('solver_kws', {})),
-                              **kwargs.get('optimiser_kws', {}))
+        n_tries = 0
+        successful_fit = False
+        while not successful_fit and n_tries < max_n_tries:
+            tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
+            currParams = fitObj.params.copy()
+            # Remove variation in initial synthetic data if not fitting initial conditions;
+            # otherwise this will blow up the residual variance as no fit can ever do well on the IC
+            areIcsVariedList = [fitObj.params[stateVar+'0'].vary for stateVar in tmpModel.stateVars]
+            if not np.any(areIcsVariedList):
+                if n_conditions==1:
+                    tmpDataDf.loc[0, 'Confluence'] = fitObj.data.Confluence.iloc[0]
+                else: # If fitting to multiple experiments simultaneously, remove variation from each experiment separately
+                    tmpDataDf.loc[tmpDataDf.Time==0, 'Confluence'] = fitObj.data[fitObj.data.Time==0].Confluence.values
+            # In developing our model we proceed in a series of steps. To propagate the error along
+            # as we advance to the next step, allow reading in previous bootstraps here.
+            if prior_experiment_df is not None:
+                for var in prior_experiment_df.columns:
+                    if var == "SSR": continue
+                    currParams[var].value = prior_experiment_df[var].iloc[bootstrapId]
+            # Generate a random initial parameter guess
+            if shuffle_params:
+                for param in paramsToEstimateList:
+                    currParams[param].value = np.random.uniform(low=currParams[param].min,
+                                                                high=currParams[param].max)
+            # Fit
+            currFitObj = minimize(residual_fun, currParams, args=(0, tmpDataDf, tmpModel,
+                                                              "Confluence", kwargs.get('solver_kws', {})),
+                                  **kwargs.get('optimiser_kws', {}))
+            n_tries += 1
+            successful_fit = currFitObj.success
+
+        # If didn't converge within max_n_tries tries, generate new synthetic data and try again
+        if n_tries > max_n_tries:
+            warnings.warn("Failed to converge on fit for bootstrapId %d. Try again with new synthetic data set.")
+            bootstrapId -= 1
+            continue
+
         # Record parameter estimates for CI estimation
         for i, param in enumerate(paramsToEstimateList):
             parameterEstimatesMat[bootstrapId, i] = currFitObj.params[param].value
