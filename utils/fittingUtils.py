@@ -142,7 +142,7 @@ def GenerateFitSummaryDf(fitDir="./fits", identifierName=None, identifierId=1):
 
 # ====================================================================================
 def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experiment_df=None, model_kws={},
-                      residual_fun=residual, n_conditions=1, max_n_tries=100,
+                      residual_fun=residual, n_conditions=1, max_n_tries=100, verbose=0,
                       show_progress=True, plot_bootstraps=False, outName=None, **kwargs):
     '''
     Function to estimate uncertainty in the parameter estimates and model predictions using a
@@ -196,6 +196,7 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
                                   **kwargs.get('optimiser_kws', {}))
             n_tries += 1
             successful_fit = currFitObj.success
+            if verbose > 0: print(bootstrapId, n_tries, successful_fit, currFitObj.message)
 
         # If didn't converge within max_n_tries tries, generate new synthetic data and try again
         if n_tries > max_n_tries:
