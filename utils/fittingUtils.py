@@ -265,6 +265,12 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
         else: # Do prediction on an adaptive schedule, which may be different for each replicate, depending on the dynamics
             getattr(tmpModel, 'Simulate_'+atToProfile)(**at_kws, solver_kws=kwargs.get('solver_kws', {}))
         tmpModel.Trim(t_eval=t_eval)
+
+        # Plot the synthetic data and the individual bootstrap fits. This is useful for i) understanding what
+        # the method is doing, and ii) debugging.
+        if False:
+            tmpModel.Plot(plotPops=True, ylim=100, y2lim=100)
+
         residual_variance_currEstimate = bootstrapResultsDf['SSR'].iloc[
                                              bootstrapId] / fitObj.nfree  # XXX Not sure this is correct for hierarchical model structure. Thus, PIs not used in paper XXX
         for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
