@@ -228,7 +228,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
                                           treatmentScheduleList=None, atToProfile=None, at_kws={},
                                           initialConditionsList=None, model_kws={},
                                           t_eval=None, n_time_steps=100,
-                                          show_progress=True, **kwargs):
+                                          show_progress=True, returnTrajectories=False, **kwargs):
     # Initialise
     if t_eval is None:
         if treatmentScheduleList is None:
@@ -247,9 +247,9 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
 
     # 1. Perform bootstrapping
     modelPredictionsMat_mean = np.zeros(
-        (n_bootstraps, n_timePoints, n_stateVars+1))  # Array to hold model predictions for CI estimation
+        (n_bootstraps, n_timePoints, n_stateVars+2))  # Array to hold model predictions for CI estimation
     modelPredictionsMat_indv = np.zeros(
-        (n_bootstraps, n_timePoints, n_stateVars+1))  # Array to hold model predictions with residual variance for PI estimation
+        (n_bootstraps, n_timePoints, n_stateVars+2))  # Array to hold model predictions with residual variance for PI estimation
     for bootstrapId in tqdm(np.arange(n_bootstraps), disable=(show_progress == False)):
         # Set up the model using the parameters from a bootstrap fit
         tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
@@ -265,6 +265,12 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
         else: # Do prediction on an adaptive schedule, which may be different for each replicate, depending on the dynamics
             getattr(tmpModel, 'Simulate_'+atToProfile)(**at_kws, solver_kws=kwargs.get('solver_kws', {}))
         tmpModel.Trim(t_eval=t_eval)
+
+        # Plot the synthetic data and the individual bootstrap fits. This is useful for i) understanding what
+        # the method is doing, and ii) debugging.
+        if False:
+            tmpModel.Plot(plotPops=True, ylim=100, y2lim=100)
+
         residual_variance_currEstimate = bootstrapResultsDf['SSR'].iloc[
                                              bootstrapId] / fitObj.nfree  # XXX Not sure this is correct for hierarchical model structure. Thus, PIs not used in paper XXX
         for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
@@ -273,6 +279,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
                                                                                                                scale=np.sqrt(
                                                                                                                    residual_variance_currEstimate),
                                                                                                                size=n_timePoints)
+        modelPredictionsMat_mean[bootstrapId, :, -1] = tmpModel.resultsDf['DrugConcentration'].values # Add separately as don't want to add this to the individual prediction matrix
 
     # 3. Estimate confidence and prediction interval for model prediction
     tmpDicList = []
@@ -296,7 +303,10 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
                                "PI_Upper_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId],
                                                                (alpha + (1 - alpha) / 2) * 100)})
     modelPredictionDf = pd.DataFrame(tmpDicList)
-    return modelPredictionDf
+    if returnTrajectories:
+        return modelPredictionDf, modelPredictionsMat_mean
+    else:
+        return modelPredictionDf
 
 # ====================================================================================
 def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialConditionsList=None, model_kws={},
