@@ -123,8 +123,44 @@ class ODEModel():
         return theta * (np.sum(popModelSolDf[self.stateVars].values,axis=1))
 
     # =========================================================================================
-    # Simulate adaptive therapy (dose modulation strategy)
-    def Simulate_AT1(self, atThreshold=0.2, doseAdjustFac=0.5, D0=None, v_min=0, intervalLength=1.,
+    # Simulate adaptive therapy (dose modulation strategy; simplified version, where we pick from a list of doses)
+    def Simulate_AT1(self, atThreshold=0.2, doseList=[0,50,100], D0=None, intervalLength=1.,
+                     t_end=1000, nCycles=np.inf, t_span=None, solver_kws={}):
+        t_span = t_span if t_span is not None else (0, t_end)
+        currInterval = [t_span[0], t_span[0] + intervalLength]
+        refSize = self.paramDic.get('scaleFactor', 1) * np.sum(self.initialStateList)
+        dose = self.paramDic['DMax'] if D0 is None else D0
+        doseId = doseList.index(dose)
+        nDoses = len(doseList)-1
+        lastNonZeroDose = dose # Remember the last non-zero dose if withdraw drug
+        currCycleId = 0
+        while (currInterval[1] <= t_end + intervalLength) and (currCycleId < nCycles):
+            # Simulate
+            # print(currInterval,refSize)
+            self.Simulate([[currInterval[0], currInterval[1], dose]], **solver_kws)
+
+            # Update dose
+            # print(self.resultsDf.TumourSize.iat[-1],(1+atThreshold)*refSize)
+            dose = lastNonZeroDose if dose == 0 else dose
+            if self.resultsDf.TumourSize.iat[-1] < (1 - atThreshold) * refSize: # Reduce dose if sufficient shrinkage
+                doseId = max(doseId-1, 0)
+                dose = doseList[doseId]
+            elif self.resultsDf.TumourSize.iat[-1] > (1 + atThreshold) * refSize: # Increase dose if excessive growth
+                doseId = min(doseId+1, nDoses)
+                dose = doseList[doseId]
+            else: # If size remains within a window of +- atThreshold, keep the same dose
+                dose = dose
+
+            # Update interval
+            refSize = self.resultsDf.TumourSize.iloc[-1]
+            currInterval = [x + intervalLength for x in currInterval]
+
+        # Clean up the data frame
+        self.resultsDf.drop_duplicates(inplace=True)
+
+    # =========================================================================================
+    # Simulate adaptive therapy (dose modulation strategy; original Enriquez-Navas et al algorithm)
+    def Simulate_AT1_original(self, atThreshold=0.2, doseAdjustFac=0.5, D0=None, v_min=0, intervalLength=1.,
                      mode="original", t_end=1000, nCycles=np.inf, t_span=None, solver_kws={}):
         t_span = t_span if t_span is not None else (0, t_end)
         currInterval = [t_span[0], t_span[0] + intervalLength]
@@ -162,7 +198,6 @@ class ODEModel():
 
         # Clean up the data frame
         self.resultsDf.drop_duplicates(inplace=True)
-
     # =========================================================================================
     # Simulate adaptive therapy (dose skipping strategy)
     def Simulate_AT2(self, atThreshold=0.2, D_star=None, D0=None, DMin=0, intervalLength=1., n_days_lookback=2, t_end=1000,
