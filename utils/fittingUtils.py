@@ -224,7 +224,7 @@ def perform_bootstrap(fitObj, n_bootstraps=5, shuffle_params=True, prior_experim
     return resultsDf
 
 # ====================================================================================
-def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95,
+def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf=None, alpha=0.95,
                                           treatmentScheduleList=None, atToProfile=None, at_kws={},
                                           initialConditionsList=None, model_kws={},
                                           t_eval=None, n_time_steps=100,
@@ -243,7 +243,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     n_stateVars = len(MakeModelFromStr(fitObj.modelName, **model_kws).stateVars)
     treatmentScheduleList = treatmentScheduleList if treatmentScheduleList is not None else utils.ExtractTreatmentFromDf(
         fitObj.data)
-    n_bootstraps = bootstrapResultsDf.shape[0]
+    n_bootstraps = 0 if bootstrapResultsDf is None else bootstrapResultsDf.shape[0]
 
     # 1. Perform bootstrapping
     modelPredictionsMat_mean = np.zeros(
@@ -284,6 +284,7 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     # 3. Estimate confidence and prediction interval for model prediction
     tmpDicList = []
     # Compute the model prediction for the model with the MLE parameter estimates
+    tmpModel = MakeModelFromStr(fitObj.modelName, **model_kws)
     tmpModel.SetParams(**fitObj.params)  # Calculate model prediction for best fit
     if initialConditionsList is not None: tmpModel.SetParams(**initialConditionsList)
     if treatmentScheduleList is None: treatmentScheduleList = utils.ExtractTreatmentFromDf(fitObj.data)
@@ -292,16 +293,26 @@ def compute_confidenceInterval_prediction(fitObj, bootstrapResultsDf, alpha=0.95
     else: # Do prediction on an adaptive schedule, which may be different for each replicate, depending on the dynamics
         getattr(tmpModel, 'Simulate_'+atToProfile)(**at_kws, solver_kws=kwargs.get('solver_kws', {}))
     tmpModel.Trim(t_eval=t_eval)
-    for i, t in enumerate(t_eval):
-        for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
-            tmpDicList.append({"Time": t, "Variable":var, "Estimate_MLE": tmpModel.resultsDf[var].iloc[i],
-                               "DrugConcentration": tmpModel.resultsDf['DrugConcentration'].iloc[i],
-                               "CI_Lower_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId], (1 - alpha) * 100 / 2),
-                               "CI_Upper_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId],
-                                                               (alpha + (1 - alpha) / 2) * 100),
-                               "PI_Lower_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId], (1 - alpha) * 100 / 2),
-                               "PI_Upper_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId],
-                                                               (alpha + (1 - alpha) / 2) * 100)})
+    if n_bootstraps>0:
+        for i, t in enumerate(t_eval):
+            for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
+                tmpDicList.append({"Time": t, "Variable":var, "Estimate_MLE": tmpModel.resultsDf[var].iloc[i],
+                                "DrugConcentration": tmpModel.resultsDf['DrugConcentration'].iloc[i],
+                                "CI_Lower_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId], (1 - alpha) * 100 / 2),
+                                "CI_Upper_Bound": np.percentile(modelPredictionsMat_mean[:, i, stateVarId],
+                                                                (alpha + (1 - alpha) / 2) * 100),
+                                "PI_Lower_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId], (1 - alpha) * 100 / 2),
+                                "PI_Upper_Bound": np.percentile(modelPredictionsMat_indv[:, i, stateVarId],
+                                                                (alpha + (1 - alpha) / 2) * 100)})
+    else:
+        for i, t in enumerate(t_eval):
+            for stateVarId, var in enumerate(['TumourSize']+tmpModel.stateVars):
+                tmpDicList.append({"Time": t, "Variable":var, "Estimate_MLE": tmpModel.resultsDf[var].iloc[i],
+                                "DrugConcentration": tmpModel.resultsDf['DrugConcentration'].iloc[i],
+                                "CI_Lower_Bound": np.nan,
+                                "CI_Upper_Bound": np.nan,
+                                "PI_Lower_Bound": np.nan,
+                                "PI_Upper_Bound": np.nan})
     modelPredictionDf = pd.DataFrame(tmpDicList)
     if returnTrajectories:
         return modelPredictionDf, modelPredictionsMat_mean
@@ -338,7 +349,7 @@ def benchmark_prediction_accuracy(fitObj, bootstrapResultsDf, dataDf, initialCon
     return pd.DataFrame(tmpDicList)
 
 # ====================================================================================
-def compute_confidenceInterval_parameters(fitObj, bootstrapResultsDf, paramsToEstimateList=None, alpha=0.95):
+def compute_confidenceInterval_parameters(fitObj, bootstrapResultsDf=None, paramsToEstimateList=None, alpha=0.95):
     # Initialise
     if paramsToEstimateList is None:
         paramsToEstimateList = [param for param in fitObj.params.keys() if fitObj.params[param].vary]
@@ -346,8 +357,13 @@ def compute_confidenceInterval_parameters(fitObj, bootstrapResultsDf, paramsToEs
     # Estimate confidence intervals for parameters from bootstraps
     tmpDicList = []
     for i, param in enumerate(paramsToEstimateList):
-        tmpDicList.append({"Parameter": param, "Estimate_MLE": fitObj.params[param].value,
-                           "Lower_Bound": np.percentile(bootstrapResultsDf[param].values, (1 - alpha) * 100 / 2),
-                           "Upper_Bound": np.percentile(bootstrapResultsDf[param].values,
-                                                        (alpha + (1 - alpha) / 2) * 100)})
+        if bootstrapResultsDf is None:
+            tmpDicList.append({"Parameter": param, "Estimate_MLE": fitObj.params[param].value,
+                               "Lower_Bound": np.nan,
+                               "Upper_Bound": np.nan})
+        else:
+            tmpDicList.append({"Parameter": param, "Estimate_MLE": fitObj.params[param].value,
+                            "Lower_Bound": np.percentile(bootstrapResultsDf[param].values, (1 - alpha) * 100 / 2),
+                            "Upper_Bound": np.percentile(bootstrapResultsDf[param].values,
+                                                            (alpha + (1 - alpha) / 2) * 100)})
     return pd.DataFrame(tmpDicList)
