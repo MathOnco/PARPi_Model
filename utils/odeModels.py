@@ -273,6 +273,8 @@ class CycleArrestModel_singleStep_extraDivs_dr(ODEModel):
     # The governing equations
     def ModelEqns(self, t, uVec):
         P, A, D = uVec
+        P = np.max([P,0]) # Scipy's ODE solvers aren't great. Apply numerical stabilisation to avoid negative values.
+        A = np.max([A,0])
         DE = np.power(D, self.paramDic['n']) / (
                     np.power(self.paramDic['EC50'], self.paramDic['n']) + np.power(D, self.paramDic['n']))
         dudtVec = np.zeros_like(uVec)

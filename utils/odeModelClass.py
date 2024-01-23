@@ -30,6 +30,7 @@ class ODEModel():
         self.dt = kwargs.get('dt', 1e-3)  # Time resolution to return the model prediction on
         self.absErr = kwargs.get('absErr', 1.0e-8)  # Absolute error allowed for ODE solver
         self.relErr = kwargs.get('relErr', 1.0e-6)  # Relative error allowed for ODE solver
+        self.max_step = kwargs.get('max_step', np.inf) # Maximum step size allowed for ODE solver
         self.solverMethod = kwargs.get('method', 'DOP853')  # ODE solver used
         self.suppressOutputB = kwargs.get('suppressOutputB',
                                           False)  # If true, suppress output of ODE solver (including warning messages)
@@ -50,6 +51,7 @@ class ODEModel():
         self.dt = float(kwargs.get('dt', self.dt))  # Time resolution to return the model prediction on
         self.absErr = kwargs.get('absErr', self.absErr)  # Absolute error allowed for ODE solver
         self.relErr = kwargs.get('relErr', self.relErr)  # Relative error allowed for ODE solver
+        self.max_step = kwargs.get('max_step', np.inf) # Maximum step size allowed for ODE solver
         self.solverMethod = kwargs.get('method', self.solverMethod)  # ODE solver used
         self.successB = False  # Indicate successful solution of the ODE system
         self.suppressOutputB = kwargs.get('suppressOutputB',
@@ -75,13 +77,13 @@ class ODEModel():
                                                        t_span=(tVec[0], tVec[-1] + self.dt), t_eval=tVec,
                                                        method=self.solverMethod,
                                                        atol=self.absErr, rtol=self.relErr,
-                                                       max_step=kwargs.get('max_step', np.inf))
+                                                       max_step=self.max_step)
             else:
                 solObj = scipy.integrate.solve_ivp(self.ModelEqns, y0=currStateVec,
                                                    t_span=(tVec[0], tVec[-1] + self.dt), t_eval=tVec,
                                                    method=self.solverMethod,
                                                    atol=self.absErr, rtol=self.relErr,
-                                                   max_step=kwargs.get('max_step', np.inf))
+                                                   max_step=self.max_step)
             # Check that the solver converged
             if not solObj.success or np.any(solObj.y < 0):
                 self.errMessage = solObj.message
@@ -281,7 +283,7 @@ class ODEModel():
         tmpDfList = []
         trimmedResultsDic = {'Time': t_eval}
         for variable in [*self.stateVars, 'TumourSize', 'DrugConcentration']:
-            f = scipy.interpolate.interp1d(self.resultsDf.Time, self.resultsDf[variable])
+            f = scipy.interpolate.interp1d(self.resultsDf.Time, self.resultsDf[variable], fill_value="extrapolate")
             trimmedResultsDic = {**trimmedResultsDic, variable: f(t_eval)}
         tmpDfList.append(pd.DataFrame(trimmedResultsDic))
         self.resultsDf = pd.concat(tmpDfList)
